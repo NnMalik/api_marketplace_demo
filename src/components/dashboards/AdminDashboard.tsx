@@ -57,6 +57,13 @@ export const AdminDashboard: React.FC = () => {
   const [selectedAPI, setSelectedAPI] = useState<PendingAPI | null>(null)
   const [showReviewDialog, setShowReviewDialog] = useState(false)
   const [reviewAction, setReviewAction] = useState<'approve' | 'reject'>('approve')
+  const [showGovernanceDialog, setShowGovernanceDialog] = useState(false)
+  const [governanceChecks, setGovernanceChecks] = useState({
+    dataPrivacy: false,
+    security: false,
+    terms: false,
+    compliance: false,
+  })
 
   useEffect(() => {
     loadData()
@@ -117,24 +124,16 @@ export const AdminDashboard: React.FC = () => {
     setProcessing(api.id)
     try {
       console.log(`🔄 ${action === 'approve' ? 'Approving' : 'Rejecting'} API:`, api.name)
-      
       const { data, error, message } = await marketplaceAPI.reviewAPI(api.id, action, session.access_token)
-      
       if (error) {
         console.error(`❌ Failed to ${action} API:`, error)
         toast.error(`Failed to ${action} API: ` + error)
         return
       }
-
       if (data) {
         console.log(`✅ API ${action}d successfully:`, data.name)
-        
-        // Remove from pending list
         setPendingAPIs(prev => prev.filter(p => p.id !== api.id))
-        
-        // Update analytics
         await loadData()
-        
         toast.success(message || `API ${action === 'approve' ? 'approved' : 'rejected'} successfully`)
       }
     } catch (error) {
@@ -144,6 +143,13 @@ export const AdminDashboard: React.FC = () => {
       setProcessing(null)
       setShowReviewDialog(false)
       setSelectedAPI(null)
+      setShowGovernanceDialog(false)
+      setGovernanceChecks({
+        dataPrivacy: false,
+        security: false,
+        terms: false,
+        compliance: false,
+      })
     }
   }
 
@@ -151,6 +157,13 @@ export const AdminDashboard: React.FC = () => {
     setSelectedAPI(api)
     setReviewAction(action)
     setShowReviewDialog(true)
+    setShowGovernanceDialog(false)
+    setGovernanceChecks({
+      dataPrivacy: false,
+      security: false,
+      terms: false,
+      compliance: false,
+    })
   }
 
   if (loading) {
@@ -424,7 +437,7 @@ export const AdminDashboard: React.FC = () => {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
         <TabsContent value="analytics">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
@@ -500,7 +513,6 @@ export const AdminDashboard: React.FC = () => {
               }
             </DialogDescription>
           </DialogHeader>
-          
           {selectedAPI && (
             <div className="py-4">
               <div className="space-y-2">
@@ -514,24 +526,99 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           )}
-
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowReviewDialog(false)}>
               Cancel
             </Button>
+            {reviewAction === 'approve' ? (
+              <Button
+                onClick={() => setShowGovernanceDialog(true)}
+                className="bg-green-600 hover:bg-green-700"
+                disabled={!!processing}
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Governance & Approve
+              </Button>
+            ) : (
+              <Button
+                onClick={() => selectedAPI && handleReviewAPI(selectedAPI, reviewAction)}
+                className="bg-red-600 hover:bg-red-700"
+                disabled={!!processing}
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                Reject API
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Governance Policies Dialog */}
+      <Dialog open={showGovernanceDialog} onOpenChange={setShowGovernanceDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Governance & Compliance Checklist</DialogTitle>
+            <DialogDescription>
+              Please confirm the API meets all governance and compliance requirements before approval.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="dataPrivacy"
+                checked={governanceChecks.dataPrivacy}
+                onChange={e => setGovernanceChecks(c => ({ ...c, dataPrivacy: e.target.checked }))}
+                className="accent-green-600 w-5 h-5"
+              />
+              <label htmlFor="dataPrivacy" className="text-sm">Data Privacy Policy Verified</label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="security"
+                checked={governanceChecks.security}
+                onChange={e => setGovernanceChecks(c => ({ ...c, security: e.target.checked }))}
+                className="accent-green-600 w-5 h-5"
+              />
+              <label htmlFor="security" className="text-sm">Security Standards Met</label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="terms"
+                checked={governanceChecks.terms}
+                onChange={e => setGovernanceChecks(c => ({ ...c, terms: e.target.checked }))}
+                className="accent-green-600 w-5 h-5"
+              />
+              <label htmlFor="terms" className="text-sm">Terms of Use Reviewed</label>
+            </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="compliance"
+                checked={governanceChecks.compliance}
+                onChange={e => setGovernanceChecks(c => ({ ...c, compliance: e.target.checked }))}
+                className="accent-green-600 w-5 h-5"
+              />
+              <label htmlFor="compliance" className="text-sm">Regulatory Compliance Confirmed</label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowGovernanceDialog(false)}>
+              Cancel
+            </Button>
             <Button
-              onClick={() => selectedAPI && handleReviewAPI(selectedAPI, reviewAction)}
-              className={reviewAction === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}
-              disabled={!!processing}
+              onClick={() => selectedAPI && handleReviewAPI(selectedAPI, 'approve')}
+              className="bg-green-600 hover:bg-green-700"
+              disabled={!!processing || !Object.values(governanceChecks).every(Boolean)}
             >
               {processing ? (
                 <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-              ) : reviewAction === 'approve' ? (
-                <CheckCircle className="w-4 h-4 mr-2" />
               ) : (
-                <XCircle className="w-4 h-4 mr-2" />
+                <CheckCircle className="w-4 h-4 mr-2" />
               )}
-              {reviewAction === 'approve' ? 'Approve API' : 'Reject API'}
+              Confirm & Approve
             </Button>
           </DialogFooter>
         </DialogContent>

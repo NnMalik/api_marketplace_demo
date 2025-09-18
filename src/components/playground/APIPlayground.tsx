@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '../auth/AuthContext'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -19,7 +20,7 @@ import {
   CheckCircle,
   XCircle
 } from 'lucide-react'
-import { toast } from 'sonner@2.0.3'
+import { toast } from 'sonner'
 
 interface APIEndpoint {
   id: string
@@ -56,6 +57,13 @@ interface RequestHistory {
 }
 
 export const APIPlayground: React.FC = () => {
+  const copyResponse = () => {
+    if (response) {
+      navigator.clipboard.writeText(JSON.stringify(response, null, 2))
+      toast.success('Response copied to clipboard')
+    }
+  }
+  const { role, session } = useAuth()
   const [selectedAPI, setSelectedAPI] = useState<string>('')
   const [selectedEndpoint, setSelectedEndpoint] = useState<APIEndpoint | null>(null)
   const [baseUrl, setBaseUrl] = useState('https://api.example.com')
@@ -84,84 +92,67 @@ export const APIPlayground: React.FC = () => {
     }
   ])
 
-  // Mock API data
-  const apis = [
-    { id: 'weather', name: 'Weather API' },
-    { id: 'auth', name: 'Authentication API' },
-    { id: 'payment', name: 'Payment Gateway' }
+  // Role-based API data
+  const [apis, setApis] = useState<{ id: string, name: string, endpointUrl?: string }[]>([])
+  useEffect(() => {
+    async function fetchAPIs() {
+      if (!session?.access_token || !role) return
+      try {
+        let apiList: any[] = []
+        if (role === 'admin' || role === 'provider') {
+          // Show all approved APIs
+          const result = await import('../../utils/api/marketplace').then(m => m.marketplaceAPI.getApprovedAPIs())
+          if (result.data) apiList = result.data
+        } else if (role === 'consumer') {
+          // Show only subscribed APIs
+          const result = await import('../../utils/api/marketplace').then(m => m.marketplaceAPI.getUserSubscriptions(session.access_token))
+          if (result.data) apiList = result.data.map((sub: any) => ({ id: sub.apiId, name: sub.apiName }))
+        }
+        setApis(apiList.map((api: any) => ({ id: api.id, name: api.name })))
+      } catch (err) {
+        toast.error('Failed to load APIs for playground')
+      }
+    }
+    fetchAPIs()
+  }, [role, session])
+
+  // Hardcoded sample endpoints for each API
+  const sampleEndpoints: APIEndpoint[] = [
+    {
+      id: 'get-info',
+      name: 'Get Info',
+      method: 'GET',
+      path: '/info',
+      description: 'Fetch basic info from the API',
+      parameters: [],
+      headers: [
+        { name: 'Authorization', value: 'Bearer {api_key}', required: true }
+      ]
+    },
+    {
+      id: 'create-item',
+      name: 'Create Item',
+      method: 'POST',
+      path: '/item',
+      description: 'Create a new item',
+      parameters: [],
+      headers: [
+        { name: 'Authorization', value: 'Bearer {api_key}', required: true },
+        { name: 'Content-Type', value: 'application/json', required: true }
+      ],
+      bodyType: 'json'
+    }
   ]
 
-  const endpoints: { [key: string]: APIEndpoint[] } = {
-    weather: [
-      {
-        id: 'current-weather',
-        name: 'Get Current Weather',
-        method: 'GET',
-        path: '/weather/current',
-        description: 'Get current weather data for a specific location',
-        parameters: [
-          {
-            name: 'city',
-            type: 'string',
-            required: true,
-            description: 'City name',
-            example: 'London'
-          },
-          {
-            name: 'units',
-            type: 'string',
-            required: false,
-            description: 'Temperature units (metric, imperial)',
-            example: 'metric'
-          }
-        ],
-        headers: [
-          { name: 'Authorization', value: 'Bearer {api_key}', required: true },
-          { name: 'Content-Type', value: 'application/json', required: true }
-        ]
-      },
-      {
-        id: 'forecast',
-        name: 'Get Weather Forecast',
-        method: 'GET',
-        path: '/weather/forecast',
-        description: 'Get 5-day weather forecast',
-        parameters: [
-          {
-            name: 'city',
-            type: 'string',
-            required: true,
-            description: 'City name',
-            example: 'New York'
-          },
-          {
-            name: 'days',
-            type: 'number',
-            required: false,
-            description: 'Number of forecast days (1-5)',
-            example: '5'
-          }
-        ],
-        headers: [
-          { name: 'Authorization', value: 'Bearer {api_key}', required: true }
-        ]
+  // When API changes, set baseUrl to API's endpointUrl
+  useEffect(() => {
+    if (selectedAPI) {
+      const apiObj = apis.find(a => a.id === selectedAPI)
+      if (apiObj && apiObj.endpointUrl) {
+        setBaseUrl(apiObj.endpointUrl)
       }
-    ],
-    auth: [
-      {
-        id: 'login',
-        name: 'User Login',
-        method: 'POST',
-        path: '/auth/login',
-        description: 'Authenticate user and receive access token',
-        parameters: [],
-        headers: [
-          { name: 'Content-Type', value: 'application/json', required: true }
-        ],
-        bodyType: 'json'
-      }
-    ]
-  }
+    }
+  }, [selectedAPI, apis])
 
   const handleAPIChange = (apiId: string) => {
     setSelectedAPI(apiId)
@@ -171,7 +162,7 @@ export const APIPlayground: React.FC = () => {
   }
 
   const handleEndpointChange = (endpointId: string) => {
-    const endpoint = endpoints[selectedAPI]?.find(e => e.id === endpointId)
+    const endpoint = sampleEndpoints.find(e => e.id === endpointId)
     setSelectedEndpoint(endpoint || null)
     setResponse(null)
     setResponseStatus(null)
@@ -251,30 +242,18 @@ export const APIPlayground: React.FC = () => {
       setRequestHistory(prev => [historyEntry, ...prev.slice(0, 9)]) // Keep last 10
       
       if (status === 200) {
-        toast.success('Request executed successfully')
-      } else {
-        toast.error('Request failed')
+        // You can add any additional logic for successful requests here
       }
     } catch (error) {
-      toast.error('Failed to execute request')
-      setResponseStatus(500)
-      setResponse({ error: 'Internal server error' })
+      toast.error('Failed to execute request');
     } finally {
-      setLoading(false)
-    }
-  }
-
-  const copyResponse = () => {
-    if (response) {
-      navigator.clipboard.writeText(JSON.stringify(response, null, 2))
-      toast.success('Response copied to clipboard')
+      setLoading(false);
     }
   }
 
   const getStatusColor = (status: number) => {
-    if (status >= 200 && status < 300) return 'default'
-    if (status >= 400 && status < 500) return 'destructive'
-    if (status >= 500) return 'destructive'
+    if (status >= 200 && status < 300) return 'success'
+    if (status >= 400) return 'destructive'
     return 'secondary'
   }
 
@@ -322,7 +301,7 @@ export const APIPlayground: React.FC = () => {
                       <SelectValue placeholder="Choose an endpoint" />
                     </SelectTrigger>
                     <SelectContent>
-                      {endpoints[selectedAPI]?.map(endpoint => (
+                      {sampleEndpoints.map(endpoint => (
                         <SelectItem key={endpoint.id} value={endpoint.id}>
                           <div className="flex items-center space-x-2">
                             <Badge variant="outline" className="text-xs">

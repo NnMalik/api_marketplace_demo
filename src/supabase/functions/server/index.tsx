@@ -61,12 +61,12 @@ function generateAPIId(): string {
 }
 
 // Health check endpoint
-app.get("/make-server-a1f48247/health", (c) => {
+app.get("/make-server-a1f48247/health", (c : any) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // Debug endpoint to check KV store
-app.get("/make-server-a1f48247/debug/kv", async (c) => {
+app.get("/make-server-a1f48247/debug/kv", async (c : any) => {
   try {
     console.log('🔍 Debug: Checking KV store contents...');
     
@@ -115,7 +115,7 @@ app.get("/make-server-a1f48247/debug/kv", async (c) => {
 });
 
 // Cleanup corrupted entries - DISABLED (KV store limitation)
-app.post("/make-server-a1f48247/debug/cleanup", async (c) => {
+app.post("/make-server-a1f48247/debug/cleanup", async (c : any) => {
   return c.json({ 
     error: 'Cleanup temporarily disabled - KV store returns values only, not keys',
     message: 'Use the Supabase UI to manually clean the database if needed'
@@ -123,7 +123,7 @@ app.post("/make-server-a1f48247/debug/cleanup", async (c) => {
 });
 
 // Signup endpoint with role assignment
-app.post("/make-server-a1f48247/signup", async (c) => {
+app.post("/make-server-a1f48247/signup", async (c : any) => {
   try {
     const { email, password, role, name } = await c.req.json();
     
@@ -175,10 +175,120 @@ app.post("/make-server-a1f48247/signup", async (c) => {
 
 // =================
 // PROVIDER ENDPOINTS
+// Provider: Delete an API by id
+app.delete("/make-server-a1f48247/apis/:id", async (c : any) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    const { user, error: authError } = await verifyAuth(authHeader);
+    if (authError || !user) {
+      return c.json({ error: 'Unauthorized: ' + (authError || 'No user') }, 401);
+    }
+    const apiId = c.req.param('id');
+    // Only allow deletion of pending or rejected APIs
+    let api = await kv.get(`api:pending:${apiId}`);
+    let status = 'pending';
+    if (!api) {
+      api = await kv.get(`api:rejected:${apiId}`);
+      status = 'rejected';
+    }
+    if (!api) {
+      // If found in approved, forbid deletion
+      const approvedApi = await kv.get(`api:approved:${apiId}`);
+      if (approvedApi) {
+        return c.json({ error: 'Cannot delete an approved API' }, 403);
+      }
+      return c.json({ error: 'API not found' }, 404);
+    }
+    if (api.providerId !== user.id) {
+      return c.json({ error: 'Forbidden: You do not own this API' }, 403);
+    }
+    // Delete only from the relevant status key
+    if (status === 'pending') {
+      await kv.del(`api:pending:${apiId}`);
+    } else if (status === 'rejected') {
+      await kv.del(`api:rejected:${apiId}`);
+    }
+    return c.json({ message: 'API deleted successfully', id: apiId });
+  } catch (error) {
+    return c.json({ error: 'Failed to delete API: ' + (error instanceof Error ? error.message : String(error)) }, 500);
+  }
+});
 // =================
 
+// Provider: Create a pricing model
+app.post("/make-server-a1f48247/pricing-models", async (c : any) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    const { user, error: authError } = await verifyAuth(authHeader);
+    if (authError || !user) {
+      return c.json({ error: 'Unauthorized: ' + (authError || 'No user') }, 401);
+    }
+    const modelData = await c.req.json();
+    if (!modelData.name || !modelData.unit) {
+      return c.json({ error: 'Missing required fields: name, unit' }, 400);
+    }
+    const modelId = `pm_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const pricingModel = {
+      id: modelId,
+      providerId: user.id,
+      name: modelData.name,
+      description: modelData.description || '',
+      price: modelData.price || 0,
+      unit: modelData.unit,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await kv.set(`pricing:${user.id}:${modelId}`, pricingModel);
+    return c.json({ data: pricingModel, message: 'Pricing model created' });
+  } catch (error) {
+    return c.json({ error: 'Failed to create pricing model: ' + error.message }, 500);
+  }
+});
+
+// Provider: List all pricing models for provider
+app.get("/make-server-a1f48247/pricing-models", async (c : any) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    const { user, error: authError } = await verifyAuth(authHeader);
+    if (authError || !user) {
+      return c.json({ error: 'Unauthorized: ' + (authError || 'No user') }, 401);
+    }
+    const allModels = await kv.getByPrefix(`pricing:${user.id}:`);
+    return c.json({ data: allModels });
+  } catch (error) {
+    return c.json({ error: 'Failed to list pricing models: ' + error.message }, 500);
+  }
+});
+
+// Provider: Update a pricing model
+app.put("/make-server-a1f48247/pricing-models/:id", async (c : any) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    const { user, error: authError } = await verifyAuth(authHeader);
+    if (authError || !user) {
+      return c.json({ error: 'Unauthorized: ' + (authError || 'No user') }, 401);
+    }
+    const modelId = c.req.param('id');
+    const modelData = await c.req.json();
+    const key = `pricing:${user.id}:${modelId}`;
+    const existing = await kv.get(key);
+    if (!existing) {
+      return c.json({ error: 'Pricing model not found' }, 404);
+    }
+    const updatedModel = {
+      ...existing,
+      ...modelData,
+      updatedAt: new Date().toISOString()
+    };
+    await kv.set(key, updatedModel);
+    return c.json({ data: updatedModel, message: 'Pricing model updated' });
+  } catch (error) {
+    return c.json({ error: 'Failed to update pricing model: ' + error.message }, 500);
+  }
+});
+
 // Provider: Submit API for approval
-app.post("/make-server-a1f48247/apis", async (c) => {
+app.post("/make-server-a1f48247/apis", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     console.log('🔐 Auth header:', authHeader ? 'Present' : 'Missing');
@@ -194,46 +304,74 @@ app.post("/make-server-a1f48247/apis", async (c) => {
 
     const apiData = await c.req.json();
     console.log('📝 Received API data:', apiData);
-    
-    const apiId = generateAPIId();
-    console.log('🆔 Generated API ID:', apiId);
-    
+
     // Validate required fields
     if (!apiData.name || !apiData.description || !apiData.category) {
       console.log('❌ API submission failed: Missing required fields');
       return c.json({ error: 'Missing required fields: name, description, category' }, 400);
     }
-    
-    const api = {
-      id: apiId,
-      name: apiData.name,
-      description: apiData.description,
-      category: apiData.category,
-      version: apiData.version || '1.0',
-      endpointUrl: apiData.endpointUrl || '',
-      providerId: user.id,
-      providerEmail: user.email,
-      providerName: user.user_metadata?.name || user.email.split('@')[0],
-      status: 'pending',
-      submittedAt: new Date().toISOString(),
-      subscribers: 0,
-      totalCalls: 0,
-      revenue: 0,
-      monthlyRevenue: 0,
-      lastUsed: null
-    };
+
+    // If apiData.id exists, update the existing API, else create new
+    let apiId = apiData.id;
+    let api;
+    if (apiId) {
+      // Check if API exists in any status
+      let existingApi = await kv.get(`api:pending:${apiId}`) || await kv.get(`api:approved:${apiId}`) || await kv.get(`api:rejected:${apiId}`);
+      if (existingApi) {
+        // Remove from approved/rejected if updating
+        await kv.del(`api:approved:${apiId}`);
+        await kv.del(`api:rejected:${apiId}`);
+        // Only update fields, do not overwrite id or submittedAt
+        api = {
+          ...existingApi,
+          ...apiData,
+          id: existingApi.id,
+          providerId: user.id,
+          providerEmail: user.email,
+          providerName: user.user_metadata?.name || user.email.split('@')[0],
+          status: 'pending',
+          submittedAt: existingApi.submittedAt,
+          version: (typeof existingApi.version === 'string' || typeof existingApi.version === 'number') ? (Number(existingApi.version) + 1) : 1
+        };
+      } else {
+        // If not found, treat as new
+        apiId = generateAPIId();
+        api = {
+          ...apiData,
+          id: apiId,
+          providerId: user.id,
+          providerEmail: user.email,
+          providerName: user.user_metadata?.name || user.email.split('@')[0],
+          status: 'pending',
+          submittedAt: new Date().toISOString(),
+          version: 1
+        };
+      }
+    } else {
+      apiId = generateAPIId();
+      api = {
+        ...apiData,
+        id: apiId,
+        providerId: user.id,
+        providerEmail: user.email,
+        providerName: user.user_metadata?.name || user.email.split('@')[0],
+        status: 'pending',
+        submittedAt: new Date().toISOString(),
+        version: 1
+      };
+    }
 
     console.log('💾 Storing API with key:', `api:pending:${apiId}`);
     console.log('📊 API object to store:', api);
 
-    // Store as pending API
+    // Store as pending API (update or create)
     const storeResult = await kv.set(`api:pending:${apiId}`, api);
     console.log('💾 KV store result:', storeResult);
-    
+
     // Immediately verify it was stored
     const verifyStored = await kv.get(`api:pending:${apiId}`);
     console.log('🔍 Verification - API retrieved:', verifyStored ? 'SUCCESS' : 'FAILED');
-    
+
     if (verifyStored) {
       console.log('✅ Stored API details:');
       console.log('   Type:', typeof verifyStored);
@@ -261,12 +399,12 @@ app.post("/make-server-a1f48247/apis", async (c) => {
     });
   } catch (error) {
     console.log('❌ Submit API error:', error);
-    return c.json({ error: 'Failed to submit API: ' + error.message }, 500);
+  return c.json({ error: 'Failed to submit API: ' + (error instanceof Error ? error.message : String(error)) }, 500);
   }
 });
 
 // Provider: Get their own APIs (all statuses)
-app.get("/make-server-a1f48247/my-apis", async (c) => {
+app.get("/make-server-a1f48247/my-apis", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     console.log('🔐 Get user APIs - Auth header:', authHeader ? 'Present' : 'Missing');
@@ -393,7 +531,7 @@ app.get("/make-server-a1f48247/my-apis", async (c) => {
     });
   } catch (error) {
     console.log('❌ Get user APIs error:', error);
-    return c.json({ error: 'Failed to fetch user APIs: ' + error.message }, 500);
+  return c.json({ error: 'Failed to fetch user APIs: ' + (error instanceof Error ? error.message : String(error)) }, 500);
   }
 });
 
@@ -402,7 +540,7 @@ app.get("/make-server-a1f48247/my-apis", async (c) => {
 // =================
 
 // Admin: Get all pending APIs
-app.get("/make-server-a1f48247/apis/pending", async (c) => {
+app.get("/make-server-a1f48247/apis/pending", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -465,7 +603,7 @@ app.get("/make-server-a1f48247/apis/pending", async (c) => {
 });
 
 // Admin: Approve or reject API
-app.post("/make-server-a1f48247/apis/:id/review", async (c) => {
+app.post("/make-server-a1f48247/apis/:id/review", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -527,7 +665,7 @@ app.post("/make-server-a1f48247/apis/:id/review", async (c) => {
 // =================
 
 // Consumer: Get all approved APIs
-app.get("/make-server-a1f48247/apis", async (c) => {
+app.get("/make-server-a1f48247/apis", async (c : any) => {
   try {
     console.log('🔄 Loading approved APIs for marketplace');
     const apis = await kv.getByPrefix('api:approved:');
@@ -563,7 +701,7 @@ app.get("/make-server-a1f48247/apis", async (c) => {
 });
 
 // Consumer: Subscribe to API
-app.post("/make-server-a1f48247/apis/:id/subscribe", async (c) => {
+app.post("/make-server-a1f48247/apis/:id/subscribe", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -625,7 +763,7 @@ app.post("/make-server-a1f48247/apis/:id/subscribe", async (c) => {
 });
 
 // Consumer: Get user subscriptions
-app.get("/make-server-a1f48247/subscriptions", async (c) => {
+app.get("/make-server-a1f48247/subscriptions", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -650,7 +788,7 @@ app.get("/make-server-a1f48247/subscriptions", async (c) => {
 });
 
 // Test API endpoint (simulate API call with usage tracking)
-app.post("/make-server-a1f48247/test-api/:id", async (c) => {
+app.post("/make-server-a1f48247/test-api/:id", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -728,7 +866,7 @@ app.post("/make-server-a1f48247/test-api/:id", async (c) => {
 // FACILITATOR ENDPOINTS
 // Facilitator: Get all active participants
 // Facilitator: Get live session activities
-app.get("/make-server-a1f48247/activity/live", async (c) => {
+app.get("/make-server-a1f48247/activity/live", async (c : any) => {
   try {
     console.log('🔔 /activity/live endpoint called');
     const authHeader = c.req.header('Authorization');
@@ -758,7 +896,7 @@ app.get("/make-server-a1f48247/activity/live", async (c) => {
   }
 });
 // Facilitator: Get live (online) participants
-app.get("/make-server-a1f48247/participants/live", async (c) => {
+app.get("/make-server-a1f48247/participants/live", async (c : any) => {
   try {
     console.log('🔔 /participants/live endpoint called');
     const authHeader = c.req.header('Authorization');
@@ -779,7 +917,7 @@ app.get("/make-server-a1f48247/participants/live", async (c) => {
     return c.json({ error: 'Failed to fetch live participants' }, 500);
   }
 });
-app.get("/make-server-a1f48247/participants", async (c) => {
+app.get("/make-server-a1f48247/participants", async (c : any) => {
   try {
     console.log('🔔 /participants endpoint called');
     const authHeader = c.req.header('Authorization');
@@ -800,7 +938,7 @@ app.get("/make-server-a1f48247/participants", async (c) => {
 // =================
 
 // Broadcast message (facilitator only)
-app.post("/make-server-a1f48247/broadcast", async (c) => {
+app.post("/make-server-a1f48247/broadcast", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -831,7 +969,7 @@ app.post("/make-server-a1f48247/broadcast", async (c) => {
 });
 
 // Get recent broadcasts
-app.get("/make-server-a1f48247/broadcasts", async (c) => {
+app.get("/make-server-a1f48247/broadcasts", async (c : any) => {
   try {
     const broadcasts = await kv.getByPrefix('broadcast:');
     const sortedBroadcasts = broadcasts
@@ -847,7 +985,7 @@ app.get("/make-server-a1f48247/broadcasts", async (c) => {
 });
 
 // Reset environment (facilitator only)
-app.post("/make-server-a1f48247/reset-environment", async (c) => {
+app.post("/make-server-a1f48247/reset-environment", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -891,7 +1029,7 @@ app.post("/make-server-a1f48247/reset-environment", async (c) => {
 });
 
 // Get platform analytics (admin/facilitator only)
-app.get("/make-server-a1f48247/analytics", async (c) => {
+app.get("/make-server-a1f48247/analytics", async (c : any) => {
   try {
     const authHeader = c.req.header('Authorization');
     const { user, error: authError } = await verifyAuth(authHeader);
@@ -923,4 +1061,5 @@ app.get("/make-server-a1f48247/analytics", async (c) => {
   }
 });
 
-Deno.serve(app.fetch);
+// For Node.js, use app.listen or export default
+export default app;

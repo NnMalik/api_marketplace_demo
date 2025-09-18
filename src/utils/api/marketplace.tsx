@@ -1,3 +1,11 @@
+// PricingModel type for API responses
+export interface PricingModel {
+  id: string
+  name: string
+  description: string
+  price: number
+  unit: string // e.g. 'per call', 'per month', 'flat'
+}
 import { projectId, publicAnonKey } from '../supabase/info'
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-a1f48247`
@@ -10,12 +18,26 @@ interface APIResponse<T> {
 }
 
 class MarketplaceAPI {
+  // Pricing Model Endpoints
+  async getProviderPricingModels(accessToken: string): Promise<APIResponse<PricingModel[]>> {
+    return this.authenticatedRequest<PricingModel[]>('/pricing-models', accessToken)
+  }
+
+  async createPricingModel(modelData: any, accessToken: string): Promise<APIResponse<any>> {
+    return this.authenticatedRequest('/pricing-models', accessToken, {
+      method: 'POST',
+      body: JSON.stringify(modelData)
+    })
+  }
+
+  async updatePricingModel(modelId: string, modelData: any, accessToken: string): Promise<APIResponse<any>> {
+    return this.authenticatedRequest(`/pricing-models/${modelId}`, accessToken, {
+      method: 'PUT',
+      body: JSON.stringify(modelData)
+    })
+  }
   async getLiveActivities(accessToken: string): Promise<APIResponse<any>> {
     return this.authenticatedRequest('/activity/live', accessToken)
-  }
-  async getLiveParticipants(accessToken: string): Promise<APIResponse<any>> {
-    // Assuming backend endpoint: /participants/live
-    return this.authenticatedRequest('/participants/live', accessToken)
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<APIResponse<T>> {
@@ -128,10 +150,10 @@ class MarketplaceAPI {
     console.log('📋 Frontend: Getting user APIs')
     console.log('🔐 Frontend: Access token:', accessToken ? `${accessToken.substring(0, 20)}...` : 'MISSING')
 
-    const result = await this.authenticatedRequest('/my-apis', accessToken)
+  const result = await this.authenticatedRequest('/my-apis', accessToken)
 
-    console.log('📨 Frontend: Get user APIs result:', result)
-    return result
+  console.log('📨 Frontend: Get user APIs result:', result)
+  return result as APIResponse<any[]>
   }
 
   // =================
