@@ -4,6 +4,7 @@
   import path from 'path';
 
   export default defineConfig({
+    base: "/api_marketplace_demo/",
     plugins: [react()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
