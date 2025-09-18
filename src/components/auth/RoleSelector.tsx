@@ -30,13 +30,6 @@ export const RoleSelector: React.FC<RoleSelectorProps> = ({ onRoleSelect }) => {
       description: 'Oversee the marketplace and approve APIs',
       icon: <Shield className="w-8 h-8 text-primary" />,
       features: ['Approve API submissions', 'Manage users', 'View platform analytics', 'Set platform policies']
-    },
-    {
-      id: 'facilitator' as UserRole,
-      title: 'Workshop Facilitator',
-      description: 'Manage training sessions and participants',
-      icon: <Users className="w-8 h-8 text-primary" />,
-      features: ['Manage workshop sessions', 'Reset environment', 'Broadcast messages', 'Monitor participant activity']
     }
   ]
 
